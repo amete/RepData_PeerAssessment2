@@ -1,0 +1,278 @@
+---
+title: Oceanic and Atmospheric Events with Severe Consequences on the Public Health
+  and the Economy
+author: "Alaettin Serhan Mete"
+date: "5/25/2017"
+output: html_document
+---
+
+```{r global_options, include=FALSE}
+knitr::opts_chunk$set(fig.width=12, fig.height=8, fig.path='figs/',
+                      echo=TRUE, warning=FALSE, message=FALSE)
+```
+
+## Synopsis
+
+This analysis involves exploring the U.S. National Oceanic and 
+Atmospheric Administration's (NOAA) storm database to answer two 
+basic but important questions: 
+Which types of events are most harmful to population health, and
+which types of events have the greatest economic consequences.
+The analysis starts by obtaining the necessary dataset and 
+getting it ready for analysis. Then, the actual analysis is performed
+and the findings are summarized.
+
+## Data Processing
+
+As the initial step, let us load the pacakages that we'll use later on:
+
+```{r}
+# Load the dplyr package
+if(!require(dplyr)){
+    install.packages("dplyr")
+    require(dplyr)
+}
+
+# Load ggplot2
+if(!require(ggplot2)){
+    install.packages("ggplot2")
+    require(ggplot2)
+}
+
+# Load gridExtra for side-by-side plots
+if(!require(gridExtra)) {
+    install.packages("gridExtra")
+    require(gridExtra)
+}
+```
+
+Then download the necessary dataset and load it:
+```{r cache = TRUE}
+# Download if doesn't exist
+if(!file.exists("StormData.csv.bz2")) {
+    download.file("https://d396qusza40orc.cloudfront.net/repdata%2Fdata%2FStormData.csv.bz2",
+                  "StormData.csv.bz2",
+                  method = "curl")
+}
+
+# Load into memory
+input.dataset <- read.csv("StormData.csv.bz2")
+```
+
+Now let's convert this into a data-table that is more user friendly
+and keep only the columns that'll be relevant to us:
+
+```{r cache = TRUE}
+# Convert into datatable
+input.dataset.dt <- tbl_df(input.dataset)
+
+# Let's select only the important columns
+dataset <- select(input.dataset.dt,EVTYPE,FATALITIES:CROPDMGEXP)
+```
+
+## Results
+
+Now let's analyze our dataset to answer our questions:
+
+### Which types of events are most harmful to population health?
+
+To answer this question, we'll compute the total number of fatalities 
+and injuries for each event type. Then, we'll sort them in decreasing order:
+
+```{r}
+# Do the grouping and get the summary in one step
+health.summary <- dataset %>% 
+                    group_by(EVTYPE) %>%
+                    summarise(total.deaths = sum(FATALITIES),
+                              total.injuries = sum(INJURIES))
+```
+
+```{r}
+# Order by deaths and print the leading 10 reasons
+health.summary.death <- health.summary %>% arrange(desc(total.deaths))
+head(health.summary.death, 10)
+```
+
+So, as the reader can see, the top three leading reasons of fatality are
+tornadoes, excessive heat, and flash floods, respectively.
+
+```{r}
+# Order by injuries and print the leading 10 reasons
+health.summary.injuries <- health.summary %>% arrange(desc(total.injuries))
+head(health.summary.injuries, 10)
+```
+
+Again, as the reader can see, the top three leading reasons of injury are
+tornadoes, tstm winds, and floods, respectively.
+
+Now, let's construct a figure with two plots, the one on top showing the
+total number of deaths (in log10) for the ten leading causes, 
+and the one on the bottom showing the total number of injuries (again in log10) 
+for the ten leading causes:
+
+```{r}
+#
+# Deaths
+#
+# Do the ordering for the x-axis
+death.sub <- health.summary.death[1:10,]
+death.sub$EVTYPE <- as.character(death.sub$EVTYPE)
+death.sub$EVTYPE <- factor(death.sub$EVTYPE, levels = unique(death.sub$EVTYPE))
+# Construct the plot
+p1 <- qplot(EVTYPE, log10(total.deaths), data = death.sub) 
+p1 <- p1 + geom_line(lwd = 1, aes(group=1), color = "blue") + geom_point(size=2, shape=21, fill="blue")
+p1 <- p1 + labs(title = "Total number of deaths for the ten leading event types (Log-scale)",
+                x = "Event Type", y = expression(paste("Log"[10],"(Total deaths)")))
+p1 <- p1 + theme(plot.title = element_text(hjust = 0.5))
+
+#
+# Injuries
+#
+# Do the ordering for the x-axis
+injuries.sub <- health.summary.injuries[1:10,]
+injuries.sub$EVTYPE <- as.character(injuries.sub$EVTYPE)
+injuries.sub$EVTYPE <- factor(injuries.sub$EVTYPE, levels = unique(injuries.sub$EVTYPE))
+# Construct the plot
+p2 <- qplot(EVTYPE, log10(total.injuries), data = injuries.sub) 
+p2 <- p2 + geom_line(lwd = 1, aes(group=1), color = "red") + geom_point(size=2, shape=21, fill="red")
+p2 <- p2 + labs(title = "Total number of injuries for the ten leading event types (Log-scale)",
+                x = "Event Type", y = expression(paste("Log"[10],"(Total injuries)")))
+p2 <- p2 + theme(plot.title = element_text(hjust = 0.5))
+
+# Now plot them on the same figure
+grid.arrange(p1,p2,nrow = 2)
+```
+
+### Which types of events have the greatest economic consequences?
+
+Now this bit is a bit more involved. There seems to be two types of damages:
+property-related and crop-related. The associated variables in the dataset are
+PROPDMG and PROPDMGEXP for the former, and CROPDMG and CROPDMGEXP for the latter.
+After surfing the documents linked in the Coursera assignment page, as well as Google,
+it's becomes apparent that the EXP variables hold the exponenet information with the 
+allowed values of (the reader can find a bit more detailed discussion [here](https://rstudio-pubs-static.s3.amazonaws.com/58957_37b6723ee52b455990e149edde45e5b6.html)):
+
+```{r}
+unique(dataset$PROPDMGEXP)
+```
+
+For these, we'll assume they correspond to:
+
+* **(blank), (?), (-)** : 0
+* **(+)**  : 10^0
+* **0..8** : 10^1
+* **h,H**  : 10^2
+* **k,K**  : 10^3
+* **m,M**  : 10^6
+* **b,B**  : 10^9
+
+So, if the *PROPDMG = 20* and *PROPDMGEXP = k*, then the total property damage in USD 
+will be *20x10^3 = 20000* USD, etc.
+
+Now let us dechiper the dataset accordingly:
+
+```{r cache = TRUE}
+# Define a simple function to do the conversion
+convert <- function(x) {
+    value = toupper(as.character(x))
+    switch(value,
+           "+" = 1e0,
+           "0" = 1e1,
+           "1" = 1e1,
+           "2" = 1e1,
+           "3" = 1e1,
+           "4" = 1e1,
+           "5" = 1e1,
+           "6" = 1e1,
+           "7" = 1e1,
+           "8" = 1e1,
+           "H" = 1e2,
+           "K" = 1e3,
+           "M" = 1e6,
+           "B" = 1e9,
+           0)
+}
+
+# Now let's add damage values to the dataset
+dataset.light <- dataset %>% 
+                    rowwise() %>% 
+                    mutate(propdmgusd = PROPDMG * convert(PROPDMGEXP),
+                           cropdmgusd = CROPDMG * convert(CROPDMGEXP)) %>% 
+                    select(EVTYPE,propdmgusd,cropdmgusd)
+```
+
+Now let's compute the total damages per event type:
+
+```{r}
+# Get the summary
+dataset.light.summary <- dataset.light %>%
+                            group_by(EVTYPE) %>%
+                            summarise(totalpropdmg = sum(propdmgusd),
+                                      totalcropdmg = sum(cropdmgusd))
+```
+
+and sort them by the total property and crop damages in descending order:
+
+```{r}
+# Order by total property damage and print the leading 10 reasons
+dataset.light.summary.by.prop <- dataset.light.summary %>%
+                                    arrange(desc(totalpropdmg))
+head(dataset.light.summary.by.prop,10)
+```
+
+So, as the reader can see, the top three leading reasons causing property damage are
+floods, hurricanes/typhoons, and tornadoes, respectively.
+
+```{r}
+# Order by total crop damage and print the leading 10 reasons
+dataset.light.summary.by.crop <- dataset.light.summary %>%
+                                    arrange(desc(totalcropdmg))
+head(dataset.light.summary.by.crop,10)
+```
+
+As far as the crop damages are concerned, the top three leading reasons are
+droughts, floods, and river floods (followed closely by ice storms), respectively.
+
+Finally, let's make a figure with two plots:
+total property damages (in millions USD) for the ten leading event types on the top, and
+total crop damages (in millions USD) for the ten leading event types on the bottom:
+
+```{r}
+#
+# Property
+#
+# Do the ordering for the x-axis
+prop.sub <- dataset.light.summary.by.prop[1:10,]
+prop.sub$EVTYPE <- as.character(prop.sub$EVTYPE)
+prop.sub$EVTYPE <- factor(prop.sub$EVTYPE, levels = unique(prop.sub$EVTYPE))
+# Construct the plot
+p3 <- qplot(EVTYPE, totalpropdmg*1e-6, data = prop.sub) 
+p3 <- p3 + geom_line(lwd = 1, aes(group=1), color = "blue") + geom_point(size=2, shape=21, fill="blue")
+p3 <- p3 + labs(title = "Total property damage (in millions USD) for the ten leading event types",
+                x = "Event Type", y = "Total property damage (in millions USD)")
+p3 <- p3 + theme(plot.title = element_text(hjust = 0.5))
+
+#
+# Crop
+#
+# Do the ordering for the x-axis
+crop.sub <- dataset.light.summary.by.crop[1:10,]
+crop.sub$EVTYPE <- as.character(crop.sub$EVTYPE)
+crop.sub$EVTYPE <- factor(crop.sub$EVTYPE, levels = unique(crop.sub$EVTYPE))
+# Construct the plot
+p4 <- qplot(EVTYPE, totalcropdmg*1e-6, data = crop.sub) 
+p4 <- p4 + geom_line(lwd = 1, aes(group=1), color = "red") + geom_point(size=2, shape=21, fill="red")
+p4 <- p4 + labs(title = "Total crop damage (in millions USD) for the ten leading event types",
+                x = "Event Type", y = "Total crop damage (in millions USD)")
+p4 <- p4 + theme(plot.title = element_text(hjust = 0.5))
+
+# Now plot them on the same figure
+grid.arrange(p3,p4,nrow = 2)
+```
+
+
+
+
+
+
+
